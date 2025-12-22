@@ -22,15 +22,29 @@ class NFLFeatureEngineer:
         self.lookback_games = lookback_games # default 5
         self.schedules = None
         self.injuries = None
+        self.weekly_stats = None
 
 
-    def load_data(self, schedules_df, injuries_df): # returns an updated instance of the class (self)
+    def load_data(self, schedules_df, injuries_df, weekly_stats_df=None): # returns an updated instance of the class (self)
         self.schedules = schedules_df.copy()
         self.injuries = injuries_df.copy() 
+        self.weekly_stats = weekly_stats_df.copy() if weekly_stats_df is not None else None
 
         # Sort by date to ensure chronological order (so we don't train model on games that haven't happened yet)
         self.schedules['gameday'] = pd.to_datetime(self.schedules['gameday'])
         self.schedules = self.schedules.sort_values('gameday').reset_index(drop=True) # reset_index resets the index --> TODO: determine if necessary
+
+        if self.weekly_stats is not None and len(self.weekly_stats) > 0:
+            team_col = None
+            for possible_name in ['team', 'recent_team', 'team_abbr', 'posteam']:
+                if possible_name in self.weekly_stats.columns:
+                    team_col = possible_name
+                    break
+
+            if team_col is not None and {"season", "week"}.issubset(self.weekly_stats.columns):
+                self.weekly_stats = self.weekly_stats.rename(columns={team_col: 'team'})
+            else:
+                self.weekly_stats = None
 
 
         self.schedules["home_win"] = (self.schedules["home_score"] > self.schedules["away_score"]).astype(int)  # 1 if home team wins, 0 otherwise
@@ -89,13 +103,23 @@ class NFLFeatureEngineer:
             return None
     
 
-        home_features = self._calculate_team_features(home_team, home_history, game_date, prefix="home")
-        away_features = self._calculate_team_features(away_team, away_history, game_date, prefix="away")
+        home_features = self._calculate_team_features(home_team, home_history, game_date, game["season"], game["week"], prefix="home")
+        away_features = self._calculate_team_features(away_team, away_history, game_date, game["season"], game["week"], prefix="away")
 
         if home_features is None or away_features is None:
             return None
         
-        features = {**home_features, **away_features} # the ** means to unpack the dictionaries
+        diff_features = {
+            "diff_win_rate": home_features["home_win_rate"] - away_features["away_win_rate"],
+            "diff_avg_points_scored": home_features["home_avg_points_scored"] - away_features["away_avg_points_scored"],
+            "diff_avg_points_allowed": home_features["home_avg_points_allowed"] - away_features["away_avg_points_allowed"],
+            "diff_point_diff": home_features["home_point_diff"] - away_features["away_point_diff"],
+            "diff_rest_days": home_features["home_rest_days"] - away_features["away_rest_days"],
+            "diff_injury_count": home_features["home_injury_count"] - away_features["away_injury_count"],
+            "diff_recent_form": home_features["home_recent_form"] - away_features["away_recent_form"],
+        }
+
+        features = {**home_features, **away_features, **diff_features} # the ** means to unpack the dictionaries
         
         # Add metadata to help debug and track predictions
         features["game_id"] = game.get("game_id", f"{game_date}_{home_team}_vs_{away_team}")
@@ -144,7 +168,7 @@ class NFLFeatureEngineer:
         return len(serious_injuries)
 
 
-    def _calculate_team_features(self, team, team_history, current_date=None, prefix="team"):
+    def _calculate_team_features(self, team, team_history, current_date=None, season=None, week=None, prefix="team"):
         """
         Calculate ALL features for ONE team
 
@@ -245,6 +269,34 @@ class NFLFeatureEngineer:
 
         features[f"{prefix}_recent_form"] = recent_wins / len(very_recent) if len(very_recent) > 0 else 0.0
 
+        if self.weekly_stats is not None and season is not None and week is not None:
+            team_weekly = self.weekly_stats[
+                (self.weekly_stats["team"] == team)
+                & (self.weekly_stats["season"] == season)
+                & (self.weekly_stats["week"] < week)
+            ]
+
+            if len(team_weekly) > 0:
+                team_weekly = team_weekly.sort_values("week").tail(self.lookback_games)
+                weekly_columns = [
+                    "points_for",
+                    "points_against",
+                    "total_yards",
+                    "offense_yards",
+                    "passing_yards",
+                    "rushing_yards",
+                    "turnovers",
+                    "takeaways",
+                    "sacks",
+                    "passing_epa",
+                    "rushing_epa",
+                    "epa",
+                ]
+
+                available_weekly = [col for col in weekly_columns if col in team_weekly.columns]
+                for col in available_weekly:
+                    features[f"{prefix}_weekly_{col}_avg"] = team_weekly[col].mean()
+
         return features
 
 
@@ -311,14 +363,28 @@ class NFLFeatureEngineer:
         self.lookback_games = lookback_games  # Number of recent games to consider for features
         self.schedules = None
         self.injuries = None
+        self.weekly_stats = None
 
-    def load_data(self, schedules_df, injuries_df):
+    def load_data(self, schedules_df, injuries_df, weekly_stats_df=None):
         self.schedules = schedules_df.copy()
         self.injuries = injuries_df.copy()
+        self.weekly_stats = weekly_stats_df.copy() if weekly_stats_df is not None else None
 
         # Sort by date to ensure chronological order (so we don't train model on games that haven't happened yet)
         self.schedules["gameday"] = pd.to_datetime(self.schedules["gameday"])
         self.schedule = self.schedules.sort_values("gameday").reset_index(drop=True) # TODO: Determine if need
+
+        if self.weekly_stats is not None and len(self.weekly_stats) > 0:
+            team_col = None
+            for possible_name in ["team", "recent_team", "team_abbr", "posteam"]:
+                if possible_name in self.weekly_stats.columns:
+                    team_col = possible_name
+                    break
+
+            if team_col is not None and {"season", "week"}.issubset(self.weekly_stats.columns):
+                self.weekly_stats = self.weekly_stats.rename(columns={team_col: "team"})
+            else:
+                self.weekly_stats = None
 
         self.schedules["home_win"] = (
             self.schedules["home_score"] > self.schedules["away_score"]
@@ -374,10 +440,34 @@ class NFLFeatureEngineer:
         if len(home_history) < self.MIN_GAMES_REQUIRED or len(away_history) < self.MIN_GAMES_REQUIRED:
             return None # Skip this game, not enough data
         
-        home_features = self._calculate_team_features(home_team, home_history, game_date, prefix="home")
-        away_features = self._calculate_team_features(away_team, away_history, game_date, prefix="away")
+        home_features = self._calculate_team_features(
+            home_team,
+            home_history,
+            game_date,
+            season=game["season"],
+            week=game["week"],
+            prefix="home",
+        )
+        away_features = self._calculate_team_features(
+            away_team,
+            away_history,
+            game_date,
+            season=game["season"],
+            week=game["week"],
+            prefix="away",
+        )
 
-        features = {**home_features, **away_features}
+        diff_features = {
+            "diff_win_rate": home_features["home_win_rate"] - away_features["away_win_rate"],
+            "diff_avg_points_scored": home_features["home_avg_points_scored"] - away_features["away_avg_points_scored"],
+            "diff_avg_points_allowed": home_features["home_avg_points_allowed"] - away_features["away_avg_points_allowed"],
+            "diff_point_diff": home_features["home_point_diff"] - away_features["away_point_diff"],
+            "diff_rest_days": home_features["home_rest_days"] - away_features["away_rest_days"],
+            "diff_injury_count": home_features["home_injury_count"] - away_features["away_injury_count"],
+            "diff_recent_form": home_features["home_recent_form"] - away_features["away_recent_form"],
+        }
+
+        features = {**home_features, **away_features, **diff_features}
         
         # Add metadata to help debug and track predictions
         features["game_id"] = game.get("game_id", f"{game_date}_{home_team}_vs_{away_team}")
@@ -418,12 +508,12 @@ class NFLFeatureEngineer:
 
         return len(serious_injuries)
 
-    def _calculate_team_features(self, team, team_history, current_date, prefix="team"):
+    def _calculate_team_features(self, team, team_history, current_date, season=None, week=None, prefix="team"):
         """
         Calculate ALL features for ONE team
         
         {prefix}_win_rate: Wins / total games (last N)
-        {prefix}_avg_point_scored: Mean points scored
+        {prefix}_avg_points_scored: Mean points scored
         {prefix}_avg_points_allowed: Mean points given up
         {prefix}_point_diff: Point differential
         {prefix}_rest_days: Days since last game
@@ -456,7 +546,7 @@ class NFLFeatureEngineer:
                 points_scored += int(game["home_score"])
             else:
                 points_scored += int(game["away_score"])
-        features[f"{prefix}_avg_point_scored"] = points_scored / len(recent_games) if len(recent_games) > 0 else 0.0
+        features[f"{prefix}_avg_points_scored"] = points_scored / len(recent_games) if len(recent_games) > 0 else 0.0
 
         # FEATURE 3: Average Points Allowed
         points_allowed = 0
@@ -468,7 +558,7 @@ class NFLFeatureEngineer:
         features[f"{prefix}_avg_points_allowed"] = points_allowed / len(recent_games) if len(recent_games) > 0 else 0.0
 
         # FEATURE 4: Point Differential
-        features[f"{prefix}_point_diff"] = features[f"{prefix}_avg_point_scored"] - features[f"{prefix}_avg_points_allowed"]
+        features[f"{prefix}_point_diff"] = features[f"{prefix}_avg_points_scored"] - features[f"{prefix}_avg_points_allowed"]
 
         # FEATURE 5: Rest Days
         last_game = team_history.iloc[-1]
@@ -494,7 +584,7 @@ class NFLFeatureEngineer:
         # FEATURE 10: Recent Form
         very_recent = recent_games.tail(self.WIN_RATE_LOOKBACK)
         recent_wins = 0
-        for _, game in recent_games.iterrows():
+        for _, game in very_recent.iterrows():
             if game["home_team"] == team:
                 if game["home_score"] > game["away_score"]:
                     recent_wins += 1
@@ -503,6 +593,33 @@ class NFLFeatureEngineer:
                     recent_wins += 1
         features[f"{prefix}_recent_form"] = recent_wins / len(very_recent) if len(very_recent) > 0 else 0
 
+        if self.weekly_stats is not None and season is not None and week is not None:
+            team_weekly = self.weekly_stats[
+                (self.weekly_stats["team"] == team)
+                & (self.weekly_stats["season"] == season)
+                & (self.weekly_stats["week"] < week)
+            ]
+
+            if len(team_weekly) > 0:
+                team_weekly = team_weekly.sort_values("week").tail(self.lookback_games)
+                weekly_columns = [
+                    "points_for",
+                    "points_against",
+                    "total_yards",
+                    "offense_yards",
+                    "passing_yards",
+                    "rushing_yards",
+                    "turnovers",
+                    "takeaways",
+                    "sacks",
+                    "passing_epa",
+                    "rushing_epa",
+                    "epa",
+                ]
+
+                available_weekly = [col for col in weekly_columns if col in team_weekly.columns]
+                for col in available_weekly:
+                    features[f"{prefix}_weekly_{col}_avg"] = team_weekly[col].mean()
 
         return features
     
@@ -532,7 +649,17 @@ class NFLFeatureEngineer:
         away_features = self._calculate_team_features(away_team, away_history, current_date, prefix="away")
 
         # 3. Organize and Finalize Feature Data for Processing
-        features = {**home_features, **away_features}
+        diff_features = {
+            "diff_win_rate": home_features["home_win_rate"] - away_features["away_win_rate"],
+            "diff_avg_points_scored": home_features["home_avg_points_scored"] - away_features["away_avg_points_scored"],
+            "diff_avg_points_allowed": home_features["home_avg_points_allowed"] - away_features["away_avg_points_allowed"],
+            "diff_point_diff": home_features["home_point_diff"] - away_features["away_point_diff"],
+            "diff_rest_days": home_features["home_rest_days"] - away_features["away_rest_days"],
+            "diff_injury_count": home_features["home_injury_count"] - away_features["away_injury_count"],
+            "diff_recent_form": home_features["home_recent_form"] - away_features["away_recent_form"],
+        }
+
+        features = {**home_features, **away_features, **diff_features}
         
         features["home_team"] = home_team
         features["away_team"] = away_team

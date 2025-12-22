@@ -1,7 +1,7 @@
 '''import pandas as pd
 import numpy as np
 import argparse
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import RandomizedSearchCV, cross_val_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
@@ -205,7 +205,7 @@ if __name__ == "__main__":
 import pandas as pd
 import numpy as np
 import argparse
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import RandomizedSearchCV, cross_val_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
@@ -216,7 +216,7 @@ from data_loader import download_nfl_data
 from features import NFLFeatureEngineer
 
 
-def train_model(model_type="random_forest", lookback_games=5, use_cross_validation=False):
+def train_model(model_type="random_forest", lookback_games=5, use_cross_validation=False, tune_hyperparameters=False):
     """
     We're solving a Binary Classification problem:
     - Input (X): Features about both teams (performance, injuries, rest, etc.)
@@ -239,6 +239,7 @@ def train_model(model_type="random_forest", lookback_games=5, use_cross_validati
     print(f"- Model: {model_type}")
     print(f"- Lookback Games for Features: {lookback_games}")
     print(f"- Use Cross-Validation: {use_cross_validation}")
+    print(f"- Tune Hyperparameters: {tune_hyperparameters}")
 
     print("\nStep 1: Loading historical NFL data...")
     schedules_df, seasonal_stats_df, weekly_stats_df, injuries_df = download_nfl_data()
@@ -249,7 +250,7 @@ def train_model(model_type="random_forest", lookback_games=5, use_cross_validati
 
     print("\nStep 2: Creating features...")
     feature_engineer = NFLFeatureEngineer(lookback_games=lookback_games)
-    feature_engineer.load_data(schedules_df, injuries_df)
+    feature_engineer.load_data(schedules_df, injuries_df, weekly_stats_df)
     features_df = feature_engineer.create_features()
     
     print(f" - Created {len(features_df)} training examples")
@@ -259,6 +260,7 @@ def train_model(model_type="random_forest", lookback_games=5, use_cross_validati
     metadata_cols = ["game_id", "season", "week", "home_team", "away_team", "target"] # Separate metadata and target from actual features
     feature_cols = [col for col in features_df.columns if col not in metadata_cols]
 
+    features_df = features_df.sort_values(["season", "week"]).reset_index(drop=True)
     X = features_df[feature_cols]
     y = features_df["target"]
     
@@ -273,14 +275,21 @@ def train_model(model_type="random_forest", lookback_games=5, use_cross_validati
     else:
         print(" - Warning: Target variable is imbalanced. Consider resampling techniques.")
 
-    # 80% training set, 20% test set
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    # 80% training set, 20% test set (time-based split)
+    split_index = int(len(features_df) * 0.8)
+    train_df = features_df.iloc[:split_index]
+    test_df = features_df.iloc[split_index:]
+
+    X_train = train_df[feature_cols]
+    y_train = train_df["target"]
+    X_test = test_df[feature_cols]
+    y_test = test_df["target"]
 
     print(f" - Training set: {len(X_train)} examples ({len(X_train) / len(X) * 100:.1f}%)")
     print(f" - Testing set: {len(X_test)} examples ({len(X_test) / len(X) * 100:.1f}%)")
     
     print("\nStep 4: Training the model...")
-    model = None # TODO: TEACHING - SESSIon - RAYAN - CHANGES MADE HERE (and below if statement)
+    model = None
     if model_type == "random_forest":
         model = RandomForestClassifier(
             n_estimators=100, # Use 100 trees in the forest (more trees = better performance but slower), too many can be overkill, too few can underfit
@@ -288,9 +297,48 @@ def train_model(model_type="random_forest", lookback_games=5, use_cross_validati
             random_state=42,
             n_jobs=-1         # Use all CPU cores for faster training
         )
+    elif model_type == "logistic_regression":
+        model = LogisticRegression(max_iter=500, random_state=42)
     else:
-        print("TODO - Implement Logistic Regression")
-        ...
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+    if tune_hyperparameters:
+        print("\nTuning hyperparameters...")
+        if model_type == "random_forest":
+            param_distributions = {
+                "n_estimators": [200, 400, 600, 800, 1000],
+                "max_depth": [5, 10, 15, 20, None],
+                "min_samples_split": [2, 5, 10],
+                "min_samples_leaf": [1, 2, 4],
+                "max_features": ["sqrt", "log2", None],
+            }
+            tuner = RandomizedSearchCV(
+                model,
+                param_distributions=param_distributions,
+                n_iter=25,
+                scoring="accuracy",
+                cv=3,
+                random_state=42,
+                n_jobs=-1,
+            )
+        else:
+            param_distributions = {
+                "C": [0.01, 0.1, 1.0, 10.0, 100.0],
+                "solver": ["liblinear", "saga"],
+            }
+            tuner = RandomizedSearchCV(
+                LogisticRegression(max_iter=500, random_state=42),
+                param_distributions=param_distributions,
+                n_iter=10,
+                scoring="accuracy",
+                cv=3,
+                random_state=42,
+                n_jobs=-1,
+            )
+
+        tuner.fit(X_train, y_train)
+        model = tuner.best_estimator_
+        print(f" - Best Params: {tuner.best_params_}")
 
     if model is not None:
         model.fit(X_train, y_train)
@@ -394,11 +442,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to use cross-validation during training (default: False)"
     )
+    parser.add_argument(
+        "--tune",
+        action="store_true",
+        help="Whether to run hyperparameter tuning before training (default: False)"
+    )
 
     args = parser.parse_args()
 
     train_model(
         model_type=args.model_type,
         lookback_games=args.lookback_games,
-        use_cross_validation=args.use_cross_validation
+        use_cross_validation=args.use_cross_validation,
+        tune_hyperparameters=args.tune
     )

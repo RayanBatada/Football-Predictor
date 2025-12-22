@@ -327,8 +327,8 @@ def predict_game(home_team, away_team, model, feature_engineer, feature_columns,
     print(f"  {home_team} recent win rate: {features_dict['home_win_rate']:.2%}")
     print(f"  {away_team} recent win rate: {features_dict['away_win_rate']:.2%}")
 
-    print(f"  {home_team} avg points scored: {features_dict['home_avg_point_scored']:.1f}")
-    print(f"  {away_team} avg points scored: {features_dict['away_avg_point_scored']:.1f}")
+    print(f"  {home_team} avg points scored: {features_dict['home_avg_points_scored']:.1f}")
+    print(f"  {away_team} avg points scored: {features_dict['away_avg_points_scored']:.1f}")
 
     print(f"  {home_team} points differential: {features_dict['home_point_diff']:.1f}")
     print(f"  {away_team} points differential: {features_dict['away_point_diff']:.1f}")
