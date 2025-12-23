@@ -23,10 +23,29 @@ class NFLFeatureEngineer:
         self.injuries = None
         self.weekly_stats = None
 
+    def __setstate__(self, state):
+        """
+        Backward-compatible unpickling.
+        Ensures new attributes exist even if the object was saved before they were added.
+        """
+        self.__dict__.update(state)
+
+        if not hasattr(self, "lookback_games"):
+            self.lookback_games = 5
+        if not hasattr(self, "schedules"):
+            self.schedules = None
+        if not hasattr(self, "injuries"):
+            self.injuries = None
+        if not hasattr(self, "weekly_stats"):
+            self.weekly_stats = None
+
+
 
     def load_data(self, schedules_df, injuries_df, weekly_stats_df=None): # returns an updated instance of the class (self)
         self.schedules = schedules_df.copy()
-        self.injuries = injuries_df.copy() 
+        self.injuries = injuries_df.copy()
+        self.weekly_stats = weekly_stats_df.copy() if weekly_stats_df is not None else None
+
 
         if self.weekly_stats is not None and len(self.weekly_stats) > 0:
             team_col = None

@@ -4,6 +4,7 @@
 4. DISPLAY RESULTS (show predicted winner, show confidence / probability, show key states that influenced prediction)
 
 '''
+
 import argparse 
 import joblib # for loading models
 
@@ -16,21 +17,21 @@ def load_model(model_type="auto"):
 
     if model_type == "auto":
         # Ensure files exist and then load
-        if os.path.exists('models/nfl_random_forest_model.pkl'):
-            model_path = 'models/nfl_random_forest_model.pkl'
+        if os.path.exists('trained_models/nfl_random_forest_model.pkl'):
+            model_path = 'trained_models/nfl_random_forest_model.pkl'
             model_name = "Random Forest"
-        elif os.path.exists('models/nfl_logistic_regression_model.pkl'):
-            model_path = 'models/nfl_logistic_regression_model.pkl'
+        elif os.path.exists('trained_models/nfl_logistic_regression_model.pkl'):
+            model_path = 'trained_models/nfl_logistic_regression_model.pkl'
             model_name = "Logistic Regression"
         else:
             raise FileNotFoundError("No model found in models directory")
     elif model_type == "random_forest":
-        model_path = "models/nfl_random_forest_model.pkl"
+        model_path = "trained_models/nfl_random_forest_model.pkl"
         model_name = "Random Forest"
         if not os.path.exists(model_path):
             raise FileNotFoundError("Random Forest model not found in models directory")
     elif model_type == "logistic_regression":
-        model_path = "models/nfl_logistic_regression_model.pkl"
+        model_path = "trained_models/nfl_logistic_regression_model.pkl"
         model_name = "Logistic Regression"
         if not os.path.exists(model_path):
             raise FileNotFoundError("Logistic Regression model not found in models directory")
@@ -40,12 +41,17 @@ def load_model(model_type="auto"):
     print(f"Loading {model_name} model from {model_path}...")
     model = joblib.load(model_path)
 
+    model_dir = os.path.dirname(model_path)
+
     print("Loading feature engineer...")
-    feature_engineer_path = "models/nfl_feature_engineer.pkl"
+    feature_engineer_path = os.path.join(model_dir, "nfl_feature_engineer.pkl")
     feature_engineer = joblib.load(feature_engineer_path)
 
     print("Loading feature columns...") # saved so that we can use the same features as during training
-    feature_columns = joblib.load("models/nfl_feature_columns.pkl")
+    feature_columns_path = os.path.join(model_dir, "nfl_feature_columns.pkl")
+    feature_columns = joblib.load(feature_columns_path)
+
+
 
     return model, feature_engineer, feature_columns
 
@@ -79,7 +85,7 @@ def predict_game(home_team, away_team, model, feature_engineer, feature_columns,
 
         features_df = pd.DataFrame([features_dict])
 
-        X = features_df[feature_columns] # Selects only the features used during training
+        X = features_df.reindex(columns=feature_columns,fill_value=0) # Selects only the features used during training
 
         print("feature created successfully!")
     except ValueError as e:
@@ -161,9 +167,13 @@ def interactive_mode(model_type="auto"):
 
         try:
             predict_game(home_team, away_team, model, feature_engineer, feature_columns)
-        except ValueError:
-            print("Invalid date format. Please enter the date in YYYY-MM-DD format.")
+        except ValueError as e:
+            print(f"Prediction failed (ValueError): {e}")
             continue
+        except Exception as e:
+            print(f"Prediction failed ({type(e).__name__}): {e}")
+            continue
+
     """
     1. Model -> Training takes a while and requires a lot of data so after the model is trained, save it for quick reference
     2. Feature Engineer -> To train the model, we had to load all of the raw data. Represents the DataFrame of all historical games and schedules
