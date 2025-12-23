@@ -361,7 +361,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lookback_games",
         type=int,
-        default=5,
+        default=8,
         help="Number of past games to consider for feature engineering (default: 5)"
     )
     parser.add_argument(
