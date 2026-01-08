@@ -1,12 +1,33 @@
 #!/bin/bash
 
 # Simple run script for NFL Predictor
+# Run this from the src/ directory
+
+echo "🏈 NFL Game Prediction Pipeline"
+echo "================================"
+echo ""
 
 # Clean old models
-rm -rf trained_models/
+echo "Cleaning old models..."
+rm -rf ../models/
 
 # Train model
-python src/train_model.py
+echo ""
+echo "Starting model training..."
+python train_model.py
 
-# Run predictions
-python src/predict.py
+# Check if training was successful
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "✓ Training complete!"
+    echo ""
+    echo "Starting prediction mode..."
+    echo ""
+    
+    # Run predictions
+    python predict.py
+else
+    echo ""
+    echo "✗ Training failed. Please check the errors above."
+    exit 1
+fi
